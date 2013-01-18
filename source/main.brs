@@ -10,25 +10,25 @@
 REM Roku Oversight Browser
 
 Sub Main()
+	'----- Screen Facade Background here ---------------
+	screenFacade = CreateObject("roPosterScreen")
+	screenFacade.show()
 
     SetTheme()
 
-    screen = CreateObject("roScreen")
-    port = CreateObject("roMessagePort")
-	fontRegistry = CreateObject("roFontRegistry")
-	fontRegistry.Register("pkg:/fonts/FontAwesome.otf")
-	'36pt, 50=med weight, no italices
-	fontAwesome = fontRegistry.Get("FontAwesome", 36, 50, false) 
-
-	screen.SetPort(port)
-
+	' List of {url:String, selectedElementIndex:Int}
 	history = CreateObject("roList")
-	history.AddTail("http://google.com")
 	showMenu = false
 	selectedMenuIndex = 0
 	selectedElementIndex = 0
 	currentUrl = "http://google.com"
-	elements = NavigateToUrl(screen, currentUrl)
+	history.AddTail({url:currentUrl, selectedElementIndex:0})
+	elements = NavigateToUrl(currentUrl)
+
+    port = CreateObject("roMessagePort")
+    screen = CreateObject("roScreen")
+	screen.SetPort(port)
+
 	DrawPage(screen, elements, selectedElementIndex)
 	While(true)
 		msg = wait(0, port)
@@ -37,9 +37,9 @@ Sub Main()
 			print "Key Pressed - " ; msg.GetInt()
 			If i = 0 and history.Count() > 1 Then
 				' Back - Go to previous URL.
-				previousUrl = history.RemoveTail()
-				elements = NavigateToUrl(screen, previousUrl)
-				selectedElementIndex = 0
+				previous = history.RemoveTail()
+				elements = NavigateToUrl(previous.url)
+				selectedElementIndex = previous.selectedElementIndex
 				DrawPage(screen, elements, selectedElementIndex)
 			Else If i = 2 Then
 				' Up - Go to previous element
@@ -54,7 +54,7 @@ Sub Main()
 				If showMenu Then
 					selectedMenuIndex = selectedMenuIndex - 1
 					If selectedMenuIndex < 0 Then
-						selectedMenuIndex = 5
+						selectedMenuIndex = 3
 					End If
 					DrawMenu(screen, selectedMenuIndex)
 				End If
@@ -62,19 +62,66 @@ Sub Main()
 				' Right - If showMenu then advance
 				If showMenu Then
 					selectedMenuIndex = selectedMenuIndex + 1
-					If selectedMenuIndex > 5 Then
+					If selectedMenuIndex > 3 Then
 						selectedMenuIndex = 0
 					End If
 					DrawMenu(screen, selectedMenuIndex)
 				End If
 			Else If i = 6 Then
-				' Select - Go to Link
-				targetUrl = elements.links[selectedElementIndex].href
-				history.AddTail(currentUrl)
-				currentUrl = targetUrl
-				elements = NavigateToUrl(screen, currentUrl)
-				selectedElementIndex = 0
-				DrawPage(screen, elements, selectedElementIndex)
+				If showMenu Then
+					' Select - Perform menu button action
+					If selectedMenuIndex = 0 Then
+						' Back - Go to previous URL.
+						previous = history.RemoveTail()
+						elements = NavigateToUrl(previous.url)
+						currentUrl = previous.url
+						selectedElementIndex = previous.selectedElementIndex
+						DrawPage(screen, elements, selectedElementIndex)
+					Else If selectedMenuIndex = 1 Then
+						' Refresh - Go to same URL.
+						elements = NavigateToUrl(currentUrl)
+						selectedElementIndex = 0
+						DrawPage(screen, elements, selectedElementIndex)
+					Else If selectedMenuIndex = 2 Then
+						' WWWW - Show keyboard screen
+						targetUrl = ShowURLKeyboard()
+						print "User entered: "; targetUrl
+						If not (targetUrl = invalid) Then
+							history.AddTail({url:currentUrl, selectedElementIndex:selectedElementIndex})
+							currentUrl = targetUrl
+							screen = invalid
+						    screen = CreateObject("roScreen")
+							screen.SetPort(port)
+							elements = NavigateToUrl(currentUrl)
+							selectedElementIndex = 0
+							showMenu = false
+							DrawPage(screen, elements, selectedElementIndex)
+						End If
+					Else If selectedMenuIndex = 3 Then
+						' Bookmarks - Show bookmarks screen
+						targetUrl = ShowBookmarksScreen(currentUrl)
+						print "User selected: "; targetUrl
+						If not (targetUrl = invalid) Then
+							history.AddTail({url:currentUrl, selectedElementIndex:selectedElementIndex})
+							currentUrl = targetUrl
+						    screen = invalid
+							screen = CreateObject("roScreen")
+							screen.SetPort(port)
+							elements = NavigateToUrl(currentUrl)
+							selectedElementIndex = 0
+							showMenu = false
+							DrawPage(screen, elements, selectedElementIndex)
+						End If
+					End If
+				Else
+					' Select - Go to Link
+					targetUrl = elements.links[selectedElementIndex].href
+					history.AddTail({url:currentUrl, selectedElementIndex:selectedElementIndex})
+					currentUrl = targetUrl
+					elements = NavigateToUrl(currentUrl)
+					selectedElementIndex = 0
+					DrawPage(screen, elements, selectedElementIndex)
+				End If
 			Else If i = 10 Then
 				' Info - Show menu
 				showMenu = NOT showMenu
@@ -86,6 +133,8 @@ Sub Main()
 			End If
 		End If
 	End While
+	screenFacade.showMessage("")
+	sleep(25)
 End Sub
 
 REM ******************************************************
@@ -106,7 +155,7 @@ REM Navigate to URL
 REM
 REM ******************************************************
 
-Function NavigateToUrl(screen, url) as Object
+Function NavigateToUrl(url) as Object
     http = CreateObject("roUrlTransfer")
     port = CreateObject("roMessagePort")
 	http.SetPort(port)
@@ -128,8 +177,9 @@ Function NavigateToUrl(screen, url) as Object
 		If type(msg) = "roUrlEvent" Then
 			If msg.GetResponseCode() = 200 Then
 				response = msg.GetString()
-				print "Response:"
-				print response
+				print "Get response."
+				'print "Response:"
+				'print response
 				json = ParseJson(response)
 				notFound = false
 			Else If msg.GetResponseCode() = 404 Then
@@ -139,8 +189,8 @@ Function NavigateToUrl(screen, url) as Object
 		End If
 	End While
 
-	print "JSON:"
-	print json
+	'print "JSON:"
+	'print json
 
 	http.SetUrl("http://oversight-js.herokuapp.com" + json.images[0])
 	pageImgPath = "tmp:/page.jpg"
@@ -150,11 +200,14 @@ Function NavigateToUrl(screen, url) as Object
 End Function
 
 Sub DrawPage(screen, elements, selectedElementIndex)
+	screen.Clear(&h00000000)
 	pageImgPath = "tmp:/page.jpg"
 	page = CreateObject("roBitmap", pageImgPath)
-	screen.DrawObject(5, 5, page)
+	screen.DrawObject(8, 8, page)
 	selectedElement = elements.links[selectedElementIndex]
-	DrawElementSelectionBox(screen, selectedElement.x, selectedElement.y, selectedElement.width, selectedElement.height)	
+	If not (selectedElement = invalid) Then
+		DrawElementSelectionBox(screen, selectedElement.x, selectedElement.y, selectedElement.width, selectedElement.height)	
+	End If
 	screen.Finish()
 	print "Drawing to screen complete"
 End Sub
@@ -162,12 +215,14 @@ End Sub
 Sub DrawMenu(screen, selectedMenuIndex)
 	buttonImgPaths = ["pkg:/images/back-button.png"
 	                  "pkg:/images/refresh-button.png"
-	                  "pkg:/images/www-button.png"]
+	                  "pkg:/images/www-button.png"
+	                  "pkg:/images/bookmark-button.png"]
 	selectedButtonImgPaths = ["pkg:/images/back-button-selected.png"
 	                          "pkg:/images/refresh-button-selected.png"
-	                          "pkg:/images/www-button-selected.png"]
+	                          "pkg:/images/www-button-selected.png"
+	                          "pkg:/images/bookmark-button-selected.png"]
 	buttons = CreateObject("roList")
-	For Each i in [0, 1, 2]
+	For Each i in [0, 1, 2, 3]
 		If i = selectedMenuIndex Then
 			buttons.AddTail({x:i*64+20, bitmap:CreateObject("roBitmap", selectedButtonImgPaths[i])})
 		Else
@@ -189,11 +244,75 @@ REM
 REM ******************************************************
 
 Sub DrawElementSelectionBox(screen, x, y, width, height)
-	x = x + 5
-	y = y + 5
+	x = x + 8
+	y = y + 8
 	screen.DrawLine(x-1, y, x+width, y, &hFF9900FF)
 	screen.DrawLine(x-1, y, x, y+height, &hFF9900FF)
 	screen.DrawLine(x+width, y+height, x+width, y, &hFF9900FF)
 	screen.DrawLine(x+width, y+height, x, y+height, &hFF9900FF)
 	screen.Finish()
 End Sub
+
+Function ShowURLKeyboard() As String
+	kbdScreen = CreateObject("roKeyboardScreen")
+	port = CreateObject("roMessagePort")
+	kbdScreen.setMessagePort(port)
+	kbdScreen.SetTitle("Navigate to URL")
+	kbdScreen.SetDisplayText("enter destination")
+	kbdScreen.SetMaxLength(50)
+	kbdScreen.AddButton(1, "Go")
+	kbdScreen.AddButton(2, "Back")
+	kbdScreen.Show()
+
+	While true
+		msg = wait(0, kbdScreen.GetMessagePort())
+		If type(msg) = "roKeyboardScreenEvent" Then
+			If msg.isScreenClosed() Then
+				return invalid
+			Else If msg.isButtonPressed() Then
+				If msg.GetIndex() = 1 Then
+					url = kbdScreen.GetText()
+					' If the user didn't enter http://, then enter it for them
+					If not (Left(url, 7) = "http://") Then
+						url = "http://" + url
+					End If
+					return url
+				Else
+					return invalid
+				End If
+			End If
+		End If
+	End While
+End Function
+
+Function ShowBookmarksScreen(currentUrl) As String
+	bookmarksScreen = CreateObject("roPosterScreen")
+	port = CreateObject("roMessagePort")
+	bookmarksScreen.setMessagePort(port)
+	bookmarksScreen.SetTitle("Bookmarks")
+	bookmarksScreen.SetListStyle("arced-16x9")
+
+	content = [{HDPosterUrl:"http://thumbs-js.herokuapp.com/thumb?href=http://news.ycombinator.com&size=300"
+	            ShortDescriptionLine1:"Hacker News"
+	            Url:"http://news.ycombinator.com"}
+	           {HDPosterUrl:"http://thumbs-js.herokuapp.com/thumb?href=http://www.wikipedia.org&size=300"
+	            ShortDescriptionLine1:"Wikipedia - The free encyclopedia"
+	            Url:"http://en.wikipedia.org"}
+	           {HDPosterUrl:"http://thumbs-js.herokuapp.com/thumb?href=http://www.reddit.com&size=300"
+	            ShortDescriptionLine1:"Reddit: the front page of the internet"
+	            Url:"http://reddit.com"}
+	           ]
+	bookmarksScreen.SetContentList(content)
+	bookmarksScreen.Show()
+
+	While true
+		msg = wait(0, bookmarksScreen.GetMessagePort())
+		If type(msg) = "roPosterScreenEvent" Then
+			If msg.isScreenClosed() Then
+				return invalid
+			Else If msg.isListItemSelected() Then
+				return content[msg.GetIndex()].Url
+			End If
+		End If
+	End While
+End Function
